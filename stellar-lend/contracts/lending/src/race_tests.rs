@@ -16,10 +16,7 @@
 //! - Protocol invariants (like collateral ratios) are checked at each step.
 
 use super::*;
-use soroban_sdk::{
-    testutils::{Address as _, Ledger},
-    Address, Env,
-};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 fn setup_race_test(
     env: &Env,
@@ -41,7 +38,7 @@ fn setup_race_test(
     client.initialize(&admin, &1_000_000_000, &1000);
     client.initialize_deposit_settings(&1_000_000_000, &100);
     client.initialize_withdraw_settings(&100);
-    
+
     (client, admin, user, asset, collateral_asset)
 }
 
@@ -89,7 +86,7 @@ fn test_intra_block_full_lifecycle() {
 
     let pos_dep = client.get_user_collateral_deposit(&user, &collateral_asset);
     assert_eq!(pos_dep.amount, 50_000);
-    
+
     let debt = client.get_user_debt(&user);
     assert_eq!(debt.borrowed_amount, 0);
 }
@@ -125,7 +122,7 @@ fn test_intra_block_invalid_ordering_withdraw_first() {
     assert!(result.is_err());
 
     client.deposit(&user, &asset, &10_000);
-    
+
     let pos = client.get_user_collateral_deposit(&user, &asset);
     assert_eq!(pos.amount, 20_000);
 }
