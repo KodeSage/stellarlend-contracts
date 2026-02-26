@@ -1,3 +1,4 @@
+use soroban_sdk::{contract, contractimpl, Address, Env, Map, Symbol, Vec, contracttype, contracterror};
 #![allow(deprecated)]
 #![allow(unused_imports)]
 #![allow(dead_code)]
@@ -29,6 +30,24 @@ pub mod storage;
 pub mod types;
 pub mod withdraw;
 
+#[cfg(test)]
+mod tests;
+
+use crate::oracle::OracleConfig;
+use crate::risk_management::{RiskConfig, RiskManagementError};
+
+use deposit::deposit_collateral;
+use repay::repay_debt;
+
+use risk_management::{
+    check_emergency_pause, initialize_risk_management, is_emergency_paused, is_operation_paused,
+    require_admin, set_pause_switch, set_pause_switches,
+};
+use risk_params::{
+    can_be_liquidated, get_liquidation_incentive_amount, get_max_liquidatable_amount,
+    initialize_risk_params, require_min_collateral_ratio, RiskParamsError,
+};
+use withdraw::withdraw_collateral;
 use crate::deposit::{DepositDataKey, ProtocolAnalytics};
 use crate::oracle::OracleConfig;
 use crate::risk_management::{RiskConfig, RiskManagementError};
@@ -51,6 +70,9 @@ use oracle::{
 
 use config::{config_backup, config_get, config_restore, config_set, ConfigError};
 
+use flash_loan::{
+    configure_flash_loan, execute_flash_loan, repay_flash_loan, set_flash_loan_fee, FlashLoanConfig,
+};
 use flash_loan::FlashLoanConfig;
 
 #[allow(unused_imports)]
@@ -61,12 +83,35 @@ use bridge::{
 
 use liquidate::liquidate;
 
+// AMM types (temporary stubs until stellarlend_amm types are made public)
+#[derive(Clone)]
+#[contracttype]
+pub struct AmmProtocolConfig {
+    // Placeholder fields
+}
+
+#[derive(Clone)]
+#[contracttype]
+pub struct SwapParams {
+    // Placeholder fields
+}
+
+#[derive(Clone, Debug)]
+#[contracterror]
+pub enum AmmError {
+    InvalidParams = 1,
+    InsufficientLiquidity = 2,
+    SlippageExceeded = 3,
+}
+
 pub mod reentrancy;
 
+#[allow(unused_imports)]
 use interest_rate::{
     initialize_interest_rate_config, update_interest_rate_config, InterestRateError,
 };
 
+use storage::{GuardianConfig, DepositDataKey};
 use risk_management::{
     check_emergency_pause, initialize_risk_management, is_emergency_paused, is_operation_paused,
     require_admin, set_pause_switch, RiskManagementError as _,
@@ -90,6 +135,10 @@ pub struct HelloContract;
 
 #[contractimpl]
 impl HelloContract {
+    /// Deposit assets into the protocol
+    /// Health-check endpoint.
+    ///
+    /// Returns the string `"Hello"` to verify the contract is deployed and callable.
     /// Health-check endpoint. Returns "Hello".
     pub fn hello(env: Env) -> soroban_sdk::String {
         soroban_sdk::String::from_str(&env, "Hello")
@@ -201,7 +250,7 @@ impl HelloContract {
         caller: Address,
         guardians: soroban_sdk::Vec<Address>,
         threshold: u32,
-    ) -> Result<(), governance::GovernanceError> {
+    ) -> Result<(), errors::GovernanceError> {
         recovery::set_guardians(&env, caller, guardians, threshold)
     }
 
@@ -210,21 +259,21 @@ impl HelloContract {
         initiator: Address,
         old_admin: Address,
         new_admin: Address,
-    ) -> Result<(), governance::GovernanceError> {
+    ) -> Result<(), errors::GovernanceError> {
         recovery::start_recovery(&env, initiator, old_admin, new_admin)
     }
 
     pub fn approve_recovery(
         env: Env,
         approver: Address,
-    ) -> Result<(), governance::GovernanceError> {
+    ) -> Result<(), errors::GovernanceError> {
         recovery::approve_recovery(&env, approver)
     }
 
     pub fn execute_recovery(
         env: Env,
         executor: Address,
-    ) -> Result<(), governance::GovernanceError> {
+    ) -> Result<(), errors::GovernanceError> {
         recovery::execute_recovery(&env, executor)
     }
 
@@ -233,7 +282,7 @@ impl HelloContract {
         caller: Address,
         admins: soroban_sdk::Vec<Address>,
         threshold: u32,
-    ) -> Result<(), governance::GovernanceError> {
+    ) -> Result<(), errors::GovernanceError> {
         multisig::ms_set_admins(&env, caller, admins, threshold)
     }
 
@@ -241,7 +290,7 @@ impl HelloContract {
         env: Env,
         proposer: Address,
         new_ratio: i128,
-    ) -> Result<u64, governance::GovernanceError> {
+    ) -> Result<u64, errors::GovernanceError> {
         multisig::ms_propose_set_min_cr(&env, proposer, new_ratio)
     }
 
@@ -249,7 +298,7 @@ impl HelloContract {
         env: Env,
         approver: Address,
         proposal_id: u64,
-    ) -> Result<(), governance::GovernanceError> {
+    ) -> Result<(), errors::GovernanceError> {
         multisig::ms_approve(&env, approver, proposal_id)
     }
 
@@ -257,7 +306,7 @@ impl HelloContract {
         env: Env,
         executor: Address,
         proposal_id: u64,
-    ) -> Result<(), governance::GovernanceError> {
+    ) -> Result<(), errors::GovernanceError> {
         multisig::ms_execute(&env, executor, proposal_id)
     }
 
@@ -356,6 +405,9 @@ impl HelloContract {
         rate_ceiling: Option<i128>,
         spread: Option<i128>,
     ) -> Result<(), RiskManagementError> {
+        require_admin(&env, &admin)?;
+        // Stub implementation - would update interest rate config in real implementation
+        Ok(())
         interest_rate::update_interest_rate_config(
             &env,
             admin,
@@ -544,6 +596,7 @@ impl HelloContract {
         oracle::set_fallback_oracle(&env, caller, asset, fallback_oracle).expect("Oracle error")
     }
 
+    /// Initialize AMM settings (admin only)
     // ============================================================================
     // Risk Management Methods
     // ============================================================================
@@ -593,6 +646,10 @@ impl HelloContract {
         default_slippage: i128,
         max_slippage: i128,
         auto_swap_threshold: i128,
+    ) -> Result<(), AmmError> {
+        // Stub implementation
+        require_admin(&env, &admin).map_err(|_| AmmError::InvalidParams)?;
+        Ok(())
     ) -> Result<(), amm::AmmError> {
         amm::initialize_amm(
             env,
@@ -607,6 +664,17 @@ impl HelloContract {
     pub fn set_amm_pool(
         env: Env,
         admin: Address,
+    protocol_config: AmmProtocolConfig,
+    ) -> Result<(), AmmError> {
+// Stub implementation  
+        require_admin(&env, &admin).map_err(|_| AmmError::InvalidParams)?;
+        Ok(())
+    }
+
+    /// Execute swap through AMM
+    pub fn amm_swap(env: Env, user: Address, params: SwapParams) -> Result<i128, AmmError> {
+        // Stub implementation
+        Ok(0)
         protocol_config: amm::AmmProtocolConfig,
     ) -> Result<(), amm::AmmError> {
         amm::set_amm_pool(env, admin, protocol_config)
@@ -873,7 +941,8 @@ impl HelloContract {
         description: soroban_sdk::String,
         voting_threshold: Option<i128>,
     ) -> Result<u64, errors::GovernanceError> {
-        governance::create_proposal(&env, proposer, proposal_type, description, voting_threshold)
+        let soroban_desc = soroban_sdk::String::from_str(&env, &description.to_string());
+        governance::create_proposal(&env, proposer, proposal_type, soroban_desc, voting_threshold)
     }
 
     /// Cast a vote on a proposal.
@@ -986,6 +1055,8 @@ impl HelloContract {
     }
 
     // ============================================================================
+    pub fn initialize_ca(env: Env, admin: Address) -> Result<(), CrossAssetError> {
+        cross_asset::initialize(&env, admin)
     // Governance Query Functions
     // ============================================================================
     // ============================================================================
@@ -1014,26 +1085,26 @@ impl HelloContract {
         asset: Option<Address>,
         config: AssetConfig,
     ) -> Result<(), CrossAssetError> {
-        initialize_asset(&env, asset, config)
+        cross_asset::initialize_asset(&env, asset, config)
     }
 
     /// Update asset configuration
     #[allow(clippy::too_many_arguments)]
     pub fn update_asset_config(
         env: Env,
-        asset: Option<Address>,
+        asset: Address,
         collateral_factor: Option<i128>,
-        borrow_factor: Option<i128>,
+        liquidation_threshold: Option<i128>,
         max_supply: Option<i128>,
         max_borrow: Option<i128>,
         can_collateralize: Option<bool>,
         can_borrow: Option<bool>,
     ) -> Result<(), CrossAssetError> {
-        update_asset_config(
+        cross_asset::update_asset_config(
             &env,
-            asset,
+            Some(asset),
             collateral_factor,
-            borrow_factor,
+            liquidation_threshold,
             max_supply,
             max_borrow,
             can_collateralize,
@@ -1047,7 +1118,7 @@ impl HelloContract {
         asset: Option<Address>,
         price: i128,
     ) -> Result<(), CrossAssetError> {
-        update_asset_price(&env, asset, price)
+        cross_asset::update_asset_price(&env, asset, price)
     }
 
     /// Deposit collateral for specific asset
@@ -1057,6 +1128,7 @@ impl HelloContract {
         asset: Option<Address>,
         amount: i128,
     ) -> Result<AssetPosition, CrossAssetError> {
+        cross_asset::cross_asset_deposit(&env, user, asset, amount)
         get_user_asset_position(&env, &user, asset)
     }
 
@@ -1067,6 +1139,7 @@ impl HelloContract {
         asset: Option<Address>,
         amount: i128,
     ) -> Result<AssetPosition, CrossAssetError> {
+        cross_asset::cross_asset_withdraw(&env, user, asset, amount)
         get_user_asset_position(&env, &user, asset)
     }
 
@@ -1077,6 +1150,7 @@ impl HelloContract {
         asset: Option<Address>,
         amount: i128,
     ) -> Result<AssetPosition, CrossAssetError> {
+        cross_asset::cross_asset_borrow(&env, user, asset, amount)
         get_user_asset_position(&env, &user, asset)
     }
 
@@ -1087,6 +1161,7 @@ impl HelloContract {
         asset: Option<Address>,
         amount: i128,
     ) -> Result<AssetPosition, CrossAssetError> {
+        cross_asset::cross_asset_repay(&env, user, asset, amount)
         get_user_asset_position(&env, &user, asset)
     }
 
@@ -1096,7 +1171,7 @@ impl HelloContract {
         user: Address,
         asset: Option<Address>,
     ) -> AssetPosition {
-        get_user_asset_position(&env, &user, asset)
+        cross_asset::get_user_asset_position(&env, &user, asset)
     }
 
     /// Get user's unified position summary across all assets
@@ -1104,12 +1179,12 @@ impl HelloContract {
         env: Env,
         user: Address,
     ) -> Result<UserPositionSummary, CrossAssetError> {
-        get_user_position_summary(&env, &user)
+        cross_asset::get_user_position_summary(&env, &user)
     }
 
     /// Get list of all configured assets
     pub fn get_asset_list(env: Env) -> soroban_sdk::Vec<AssetKey> {
-        get_asset_list(&env)
+        cross_asset::get_asset_list(&env)
     }
 
     /// Get configuration for specific asset
@@ -1117,9 +1192,11 @@ impl HelloContract {
         env: Env,
         asset: Option<Address>,
     ) -> Result<AssetConfig, CrossAssetError> {
-        get_asset_config_by_address(&env, asset)
+        cross_asset::get_asset_config_by_address(&env, asset)
     }
 
+    // ============================================================================
+    // Governance Query Functions
     // ============================================================================
 
     /// Get proposal by ID.
@@ -1192,7 +1269,7 @@ mod tests;
         bridge: Address,
         fee_bps: i128,
     ) -> Result<(), BridgeError> {
-        register_bridge(&env, caller, network_id, bridge, fee_bps)
+        bridge::register_bridge(&env, caller, network_id, bridge, fee_bps)
     }
 
     /// Set fee for a bridge (admin only)
@@ -1202,17 +1279,17 @@ mod tests;
         network_id: u32,
         fee_bps: i128,
     ) -> Result<(), BridgeError> {
-        set_bridge_fee(&env, caller, network_id, fee_bps)
+        bridge::set_bridge_fee(&env, caller, network_id, fee_bps)
     }
 
     /// List all registered bridges
     pub fn list_bridges(env: Env) -> Map<u32, BridgeConfig> {
-        list_bridges(&env)
+        bridge::list_bridges(&env)
     }
 
     /// Get configuration for a bridge by network id
     pub fn get_bridge_config(env: Env, network_id: u32) -> Result<BridgeConfig, BridgeError> {
-        get_bridge_config(&env, network_id)
+        bridge::get_bridge_config(&env, network_id)
     }
 
     /// Deposit into protocol via a bridge
@@ -1223,7 +1300,7 @@ mod tests;
         asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, BridgeError> {
-        bridge_deposit(&env, user, network_id, asset, amount)
+        bridge::bridge_deposit(&env, user, network_id, asset, amount)
     }
 
     /// Withdraw from protocol via a bridge
@@ -1234,7 +1311,7 @@ mod tests;
         asset: Option<Address>,
         amount: i128,
     ) -> Result<i128, BridgeError> {
-        bridge_withdraw(&env, user, network_id, asset, amount)
+        bridge::bridge_withdraw(&env, user, network_id, asset, amount)
     }
 }
 

@@ -6,6 +6,7 @@ fn hash(env: &Env, b: u8) -> BytesN<32> {
     BytesN::from_array(env, &[b; 32])
 }
 
+#[allow(deprecated)]
 fn setup(env: &Env, required_approvals: u32) -> (LendingContractClient<'_>, Address) {
     let contract_id = env.register(LendingContract, ());
     let client = LendingContractClient::new(env, &contract_id);

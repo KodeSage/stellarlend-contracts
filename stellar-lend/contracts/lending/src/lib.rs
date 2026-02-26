@@ -42,6 +42,7 @@ use views::{
 };
 
 use withdraw::withdraw as withdraw_logic;
+
 mod data_store;
 use stellarlend_common::upgrade;
 pub use stellarlend_common::upgrade::{UpgradeError, UpgradeStage, UpgradeStatus};
@@ -72,6 +73,9 @@ mod race_tests;
 mod upgrade_test;
 #[cfg(test)]
 mod withdraw_test;
+
+#[cfg(test)]
+mod stress_test;
 
 #[contract]
 pub struct LendingContract;
