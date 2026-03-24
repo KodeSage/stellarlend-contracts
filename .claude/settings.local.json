@@ -5,14 +5,15 @@
       "Bash(rustup target:*)",
       "Bash(cargo test:*)",
       "Bash(find:*)",
-      "Bash(grep -v \"^--$\")",
-      "Bash(cargo install:*)",
-      "Bash(cargo tarpaulin:*)",
+      "Bash(echo \"EXIT:$?\")",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
-      "Bash(wc -l /Users/0xkodesage/Desktop/stellarlend-contracts/stellar-lend/contracts/hello-world/src/*.rs)"
+      "Bash(cargo tarpaulin:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo clippy:*)"
     ],
     "deny": [],
     "ask": []
-  }
+  },
+  "disabledMcpjsonServers": ["supabase"]
 }
